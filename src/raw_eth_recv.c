@@ -9,11 +9,10 @@
 #include <linux/if_packet.h>
 
 #define PACKET_SIZE		1000
-#define SYN				0xa002
-#define SYNACK			0x0012
+#define SYN				0x02
+#define SYNACK			0x12
 #define IPV6			0x86dd
 #define MAC_ADDR_SIZE	6
-#define IPV4_SIZE		4
 #define IPV6_SIZE		8
 #define OPTIONS_SIZE	12			
 
@@ -30,14 +29,14 @@ struct ipv6_s {
 	uint16_t payload_length;
 	uint8_t next_header;
 	uint8_t hop_limit;
-	uint16_t src_addr[IPV6_SIZE];
 	uint16_t dst_addr[IPV6_SIZE];
+	uint16_t src_addr[IPV6_SIZE];
 };
 
 /* Descrição do cabeçalho TCP */
 struct tcp_s {
-	uint16_t src_port;
 	uint16_t dst_port;
+	uint16_t src_port;
 	uint32_t seq_number;
 	uint32_t ack_number;
 	uint16_t flags;
@@ -52,7 +51,7 @@ int main(int argc, char *argv[]) {
 	uint8_t packet[PACKET_SIZE];
 	struct ifreq ifr;
 	char ifname[IFNAMSIZ];
-	struct ethernet_s *ethernet = (struct ethernet_s *)&packet;
+	struct ethernet_s *ethernet;
 	struct ipv6_s *ipv6;
 	struct tcp_s *tcp;
 
@@ -89,6 +88,10 @@ int main(int argc, char *argv[]) {
 		perror("ioctl");
 		exit(1);
 	}
+	
+	ethernet = (struct ethernet_s *)&packet;
+	ipv6 = (struct ipv6_s *)&packet[sizeof(struct ethernet_s)];
+	tcp = (struct tcp_s *)&packet[sizeof(struct ethernet_s) + sizeof(struct ipv6_s)];
 
 	printf("Esperando pacotes ... \n");
 	while (1) {
@@ -107,21 +110,23 @@ int main(int argc, char *argv[]) {
 		
 		/* Verifico se o ethertype é IPV6 */
 		if (ethernet->ethertype == IPV6) {
-			// TBD: Identificar o campo flags é SYN (0x002)
-			ipv6 = (struct ipv6_s *)&packet[sizeof(struct ethernet_s)];
-			tcp = (struct tcp_s *)&packet[sizeof(struct ethernet_s) + sizeof(struct ipv6_s)];
-			printf("ETHERNET II\n");
-			printf("mac_addr_src: %02x:%02x:%02x:%02x:%02x:%02x\n", ethernet->mac_src[0], ethernet->mac_src[1], ethernet->mac_src[2], ethernet->mac_src[3], ethernet->mac_src[4], ethernet->mac_src[5]);
-			printf("mac_addr_dst: %02x:%02x:%02x:%02x:%02x:%02x\n", ethernet->mac_dst[0], ethernet->mac_dst[1], ethernet->mac_dst[2], ethernet->mac_dst[3], ethernet->mac_dst[4], ethernet->mac_dst[5]);
-			printf("   ethertype: 0x%04x\n", ethernet->ethertype);	
-			printf("IPV6\n");
-			printf(" ip_addr_src: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n", ipv6->src_addr[0], ipv6->src_addr[1], ipv6->src_addr[2], ipv6->src_addr[3], ipv6->src_addr[4], ipv6->src_addr[5], ipv6->src_addr[6], ipv6->src_addr[7]);
-			printf(" ip_addr_dst: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n", ipv6->dst_addr[0], ipv6->dst_addr[1], ipv6->dst_addr[2], ipv6->dst_addr[3], ipv6->dst_addr[4], ipv6->dst_addr[5], ipv6->dst_addr[6], ipv6->dst_addr[7]);
-			printf("TCP\n");
-			printf("    src_port: %d\n", tcp->src_port);
-			printf("    dst_port: %d\n", tcp->dst_port);
-			printf("       flags: 0x%04x\n", tcp->flags);
-			printf("\n\n");
+			if (ipv6->next_header == 6) {
+				if ((ntohs(tcp->flags) & SYNACK) == SYNACK) {
+					// TBD: Identificar o mac addr ou ipv6 do src
+					printf("ETHERNET II\n");
+					printf("mac_addr_src: %02x:%02x:%02x:%02x:%02x:%02x\n", ethernet->mac_src[0], ethernet->mac_src[1], ethernet->mac_src[2], ethernet->mac_src[3], ethernet->mac_src[4], ethernet->mac_src[5]);
+					printf("mac_addr_dst: %02x:%02x:%02x:%02x:%02x:%02x\n", ethernet->mac_dst[0], ethernet->mac_dst[1], ethernet->mac_dst[2], ethernet->mac_dst[3], ethernet->mac_dst[4], ethernet->mac_dst[5]);
+					printf("   ethertype: 0x%04x\n", ethernet->ethertype);	
+					printf("IPV6\n");
+					printf(" ip_addr_src: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n", ntohs(ipv6->src_addr[0]), ntohs(ipv6->src_addr[1]), ntohs(ipv6->src_addr[2]), ntohs(ipv6->src_addr[3]), ntohs(ipv6->src_addr[4]), ntohs(ipv6->src_addr[5]), ntohs(ipv6->src_addr[6]), ntohs(ipv6->src_addr[7]));
+					printf(" ip_addr_dst: %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x\n", ntohs(ipv6->dst_addr[0]), ntohs(ipv6->dst_addr[1]), ntohs(ipv6->dst_addr[2]), ntohs(ipv6->dst_addr[3]), ntohs(ipv6->dst_addr[4]), ntohs(ipv6->dst_addr[5]), ntohs(ipv6->dst_addr[6]), ntohs(ipv6->dst_addr[7]));
+					printf("TCP\n");
+					printf("    src_port: %d\n", ntohs(tcp->src_port));
+					printf("    dst_port: %d\n", ntohs(tcp->dst_port));
+					printf("       flags: %s\n", (ntohs(tcp->flags) & SYNACK) == SYNACK ? "SYN+ACK" : "NONE");
+					printf("\n\n");
+				}			
+			}	
 		}
 	}
 
