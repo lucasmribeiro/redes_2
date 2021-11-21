@@ -8,43 +8,65 @@
 #include <arpa/inet.h>
 #include <linux/if_packet.h>
 
-#define N 255
-#define IP_LEN 4
-#define REQUEST 0x0001
-#define RESPONSE 0x0002
-#define PROTOCOL 0x0806
-#define MAC_ADDR_LEN 6
-#define BUFFER_SIZE 1600
-#define MAX_DATA_SIZE 1500
-#define ARP_PACKET_LEN 28
+#define N				256
+#define PACKET_SIZE		1000
+#define IPV6			0x86dd
+#define HEADER			0x60098a90
+#define MAC_ADDR_SIZE	6
+#define IPV6_SIZE		8
+#define OPTIONS_SIZE	10			
 
-// TODO: Implementar a aplicação do atacante.
+/* Destination */
+const uint8_t mac_dst[MAC_ADDR_SIZE] = { 0x08, 0x00, 0x27, 0xcc, 0x5a, 0x6e };
+const uint16_t dst_addr[IPV6_SIZE] = {  0x2804, 0x07f4, 0xf980, 0x2de2, 
+										0x8866, 0x6083, 0x23f2, 0x01cb };
+/* Source */
+const uint8_t mac_src[MAC_ADDR_SIZE] = { 0x08, 0x00, 0x27, 0x43, 0x73, 0xbc };
+const uint16_t src_addr[IPV6_SIZE] = {  0x2804, 0x07f4, 0xf980, 0x2de2, 
+										0xa43d, 0x6489, 0x774f, 0xcdb6 };
+
+struct ethernet_s {
+	uint8_t mac_dst[MAC_ADDR_SIZE];
+	uint8_t mac_src[MAC_ADDR_SIZE];
+	uint16_t ethertype;
+};
+
+/* Descrição do cabeçalho IPV6 */
+struct ipv6_s {
+	uint32_t header;
+	uint16_t payload_length;
+	uint8_t next_header;
+	uint8_t hop_limit;
+	uint16_t src_addr[IPV6_SIZE];
+	uint16_t dst_addr[IPV6_SIZE];
+};
+
+/* Descrição do cabeçalho TCP */
+struct tcp_s {
+	uint16_t src_port;
+	uint16_t dst_port;
+	uint32_t seq_number;
+	uint32_t ack_number;
+	uint16_t flags;
+	uint16_t window;
+	uint16_t checksum;
+	uint16_t urgent_pointer;
+	uint16_t options[OPTIONS_SIZE];
+};
 
 int main(int argc, char *argv[])
 {
 	int fd;
+	uint8_t packet[PACKET_SIZE];
 	struct ifreq if_idx;
 	struct ifreq if_mac;
 	struct sockaddr_ll socket_address;
 	char ifname[IFNAMSIZ];
-	int frame_len = 0;
-	/* Ethernet */
-	char buffer[BUFFER_SIZE];
-	char dest_mac[MAC_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //broadcast
-	short int ethertype = htons(PROTOCOL);
-	/* ARP Protocol */
-	int arp_len = 0;
-	char arp_packet[ARP_PACKET_LEN];
-	short int hwtype = htons(0x0001);
-	short int ptype  = htons(0x0800);
-	char hlen = 0x06;
-	char plen = 0x04;
-	short int op = htons(REQUEST);
-	char sender_ha[MAC_ADDR_LEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-	char sender_ip[IP_LEN] = {192, 168, 15, 15}; // Alterar para o IP da Interface de Rede
-	char target_ha[MAC_ADDR_LEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; 
-	char target_ip[IP_LEN] = {192, 168, 15, 1}; // Rede a ser descoberta
+	struct ethernet_s *ethernet;
+	struct ipv6_s *ipv6;
+	struct tcp_s *tcp;
 
+	// Defino interface de rede a ser utilizada	
 	if (argc != 2) {
 		printf("Usage: %s iface\n", argv[0]);
 		return 1;
@@ -73,95 +95,73 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* Copia MAC e IP para estrutura ARP */
-	memcpy(sender_ha, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
+	ethernet = (struct ethernet_s *)&packet;
+	ipv6 = (struct ipv6_s *)&packet[sizeof(struct ethernet_s)];
+	tcp = (struct tcp_s *)&packet[sizeof(struct ethernet_s) + sizeof(struct ipv6_s)];
 
-
-	/* Indice da interface de rede */
-	socket_address.sll_ifindex = if_idx.ifr_ifindex;
-
-	/* Tamanho do endereco (ETH_ALEN = 6) */
+	/* Configura SocketRaw */
+	socket_address.sll_family = htons(PF_PACKET);
+	socket_address.sll_protocol = htons(ETH_P_ALL);
 	socket_address.sll_halen = ETH_ALEN;
+	socket_address.sll_ifindex = if_idx.ifr_ifindex;
+	
+	/* Pacote Ethernet II */
+	memcpy(ethernet->mac_dst, mac_dst, MAC_ADDR_SIZE * sizeof(uint8_t));
+	memcpy(ethernet->mac_src, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_SIZE * sizeof(uint8_t));
+	ethernet->ethertype = htons(IPV6);
 
-	/* Endereco MAC de destino */
-	memcpy(socket_address.sll_addr, dest_mac, MAC_ADDR_LEN);
+	/* Pacote IPV6 */
+	ipv6->header = htonl(HEADER);
+	ipv6->payload_length = htons(sizeof(struct tcp_s));
+	ipv6->next_header = 0x06;
+	ipv6->hop_limit = 0x40;
+	
+	ipv6->src_addr[0] = htons(src_addr[0]);
+	ipv6->src_addr[1] = htons(src_addr[1]);
+	ipv6->src_addr[2] = htons(src_addr[2]);
+	ipv6->src_addr[3] = htons(src_addr[3]);
+	ipv6->src_addr[4] = htons(src_addr[4]);
+	ipv6->src_addr[5] = htons(src_addr[5]);
+	ipv6->src_addr[6] = htons(src_addr[6]);
+	ipv6->src_addr[7] = htons(src_addr[7]);
+	
+	ipv6->dst_addr[0] = htons(dst_addr[0]);
+	ipv6->dst_addr[1] = htons(dst_addr[1]);
+	ipv6->dst_addr[2] = htons(dst_addr[2]);
+	ipv6->dst_addr[3] = htons(dst_addr[3]);
+	ipv6->dst_addr[4] = htons(dst_addr[4]);
+	ipv6->dst_addr[5] = htons(dst_addr[5]);
+	ipv6->dst_addr[6] = htons(dst_addr[6]);
+	ipv6->dst_addr[7] = htons(dst_addr[7]);
+	
+	/* Pacote TCP */
+	tcp->src_port = htons(0xdca8);
+	tcp->dst_port = htons(0x01bb);
+	tcp->seq_number = htonl(0x4b9f8b91);
+	tcp->ack_number = 0x00000000;
+	tcp->flags = htons(0xa002);
+	tcp->checksum = htons(0xc508);
+	tcp->urgent_pointer = 0x0000;
 
-	/* Preenche o buffer com 0s */
-	memset(buffer, 0, BUFFER_SIZE);
+	tcp->options[0] = htons(0x0204);
+	tcp->options[1] = htons(0x0578);
+	tcp->options[2] = htons(0x0402);
+	tcp->options[3] = htons(0x080a);
+	tcp->options[4] = htons(0x7be5);
+	tcp->options[5] = htons(0x468f);
+	tcp->options[6] = htons(0x0000);
+	tcp->options[7] = htons(0x0000);
+	tcp->options[8] = htons(0x0103);
+	tcp->options[9] = htons(0x0307);
 
-	/* Monta o cabecalho Ethernet */
-
-	/* Preenche o campo de endereco MAC de destino */
-	memcpy(buffer, dest_mac, MAC_ADDR_LEN);
-	frame_len += MAC_ADDR_LEN;
-
-	/* Preenche o campo de endereco MAC de origem */
-	memcpy(buffer + frame_len, if_mac.ifr_hwaddr.sa_data, MAC_ADDR_LEN);
-	frame_len += MAC_ADDR_LEN;
-
-	/* Preenche o campo EtherType */
-	memcpy(buffer + frame_len, &ethertype, sizeof(ethertype));
-	frame_len += sizeof(ethertype);
-
-	/* Monta o Arp Packet */
-	memset(arp_packet, 0, ARP_PACKET_LEN);
-
-	/* Hardware Type */
-	memcpy(arp_packet + arp_len, &hwtype, sizeof(hwtype));
-	arp_len += sizeof(hwtype);
-
-	/* Protocol Type */
-	memcpy(arp_packet + arp_len, &ptype, sizeof(ptype));
-	arp_len += sizeof(ptype);
-
-	/* Hardware Length */
-	memcpy(arp_packet + arp_len, &hlen, sizeof(hlen));
-	arp_len += sizeof(hlen);
-
-	/* Protocol Length */
-	memcpy(arp_packet + arp_len, &plen, sizeof(plen));
-	arp_len += sizeof(plen);
-
-	/* Operation */
-	memcpy(arp_packet + arp_len, &op, sizeof(op));
-	arp_len += sizeof(op);
-
-	/* Sender HA */
-	memcpy(arp_packet + arp_len, sender_ha, MAC_ADDR_LEN);
-	arp_len += MAC_ADDR_LEN;
-
-	/* Sender IP */
-	memcpy(arp_packet + arp_len, sender_ip, IP_LEN);
-	arp_len += sizeof(sender_ip);
-
-	/* Target HA */
-	memcpy(arp_packet + arp_len, target_ha, MAC_ADDR_LEN);
-	arp_len += MAC_ADDR_LEN;
-
-	/* Laço para testar todas as N possibilidades de IPs */
-	for(int k = 1; k < N; k++)
-	{
-		/* Testa se o ARP Request está sendo enviado para ele mesmo */
-		if(k == sender_ip[IP_LEN-1]) continue;
-
-		/* Atualiza o IP a ser descoberto */
-		target_ip[3] = k;
-
-		/* Target IP */
-		memcpy(arp_packet + arp_len, target_ip, IP_LEN);
-
-		/* Preenche o Data com Arp Packet */
-		memcpy(buffer + frame_len, arp_packet, ARP_PACKET_LEN);
-
-		/* Envia pacote */
-		if (sendto(fd, buffer, frame_len+sizeof(arp_packet), 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
-			perror("send");
-			close(fd);
-			exit(1);
-		}
+	/* Envia pacote */
+	if (sendto(fd, packet, sizeof(struct ethernet_s) + sizeof(struct ipv6_s) + sizeof(struct tcp_s), 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+		perror("send");
+		close(fd);
+		exit(1);
 	}
-
-	printf("Pacotes enviado.\n");
+	
+	printf("Pacote enviado.\n");
 
 	close(fd);
 	return 0;
