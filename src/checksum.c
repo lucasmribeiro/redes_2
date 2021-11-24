@@ -39,20 +39,6 @@
 #include <sys/types.h>
 
 /*
-        def checksum(msg):
-	s = 0
-	# loop taking 2 characters at a time
-	for i in range(0, len(msg), 2):
-		w = ((msg[i]) << 8) + (msg[i+1])
-		s = s + w
-
-	s = (s >> 16) + (s & 0xffff);
-	s = ~s & 0xffff
-
-	return s
-*/
-
-/*
  * in_cksum --
  *      Checksum routine for Internet Protocol family headers (C Version)
  */
