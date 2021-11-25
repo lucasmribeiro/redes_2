@@ -5,14 +5,14 @@
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <netinet/ether.h>
-#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h> 
 #include <linux/if_packet.h>
 #include "checksum.h"
 
-#define N				256
-#define PACKET_SIZE		1000
+#define N				391
+#define PACKET_SIZE		1500
 #define IPV6			0x86dd
-#define HEADER			0x60098a90
 #define MAC_ADDR_SIZE	6
 #define IPV6_SIZE		8		
 
@@ -56,7 +56,11 @@ struct tcp_s {
 int main(int argc, char *argv[])
 {
 	int fd;
+	int chklen = 0;
+	int count, lvalue;
 	uint8_t packet[PACKET_SIZE];
+	uint8_t buff[PACKET_SIZE];
+	struct tcphdr tcphdr;
 	struct ifreq if_idx;
 	struct ifreq if_mac;
 	struct sockaddr_ll socket_address;
@@ -142,17 +146,64 @@ int main(int argc, char *argv[])
 	tcp->window = htons(65535);
 	tcp->checksum = htons(0);
 	tcp->urgent_pointer = htons(0);
-	// 0x6383
-	printf("\nchecksum: 0x%04x\n", htons(in_cksum(packet + sizeof(struct ethernet_s), (sizeof(struct ipv6_s) + sizeof(struct tcp_s))/2)));
-
-	/* Envia pacote */
-	if (sendto(fd, packet, sizeof(struct ethernet_s) + sizeof(struct ipv6_s) + sizeof(struct tcp_s), 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
-		perror("send");
-		close(fd);
-		exit(1);
-	}
 	
-	printf("Pacote enviado.\n");
+	// Calculo do Checksum
+	/* IPV6 Header */
+	memcpy(buff, &ipv6->src_addr, sizeof(ipv6->src_addr));
+	chklen += sizeof(ipv6->src_addr);
+
+	memcpy(buff + chklen, &ipv6->dst_addr, sizeof(ipv6->dst_addr));
+	chklen += sizeof(ipv6->dst_addr);
+
+	lvalue = htonl (sizeof (tcphdr));
+	memcpy (buff + chklen, &lvalue, sizeof (lvalue));
+	chklen += sizeof(lvalue);
+
+	buff[chklen] = 0; chklen++;
+	buff[chklen] = 0; chklen++;
+	buff[chklen] = 0; chklen++;
+	
+	buff[chklen] = ipv6->next_header; chklen++;
+	
+	/* TCP Header */
+	memcpy(buff + chklen, &tcp->src_port, sizeof(tcp->src_port));
+	chklen += sizeof(tcp->src_port);
+
+	memcpy(buff + chklen, &tcp->dst_port, sizeof(tcp->dst_port));
+	chklen += sizeof(tcp->dst_port);
+
+	memcpy(buff + chklen, &tcp->seq_number, sizeof(tcp->seq_number));
+	chklen += sizeof(tcp->seq_number);
+
+	memcpy(buff + chklen, &tcp->ack_number, sizeof(tcp->ack_number));
+	chklen += sizeof(tcp->ack_number);
+
+	memcpy(buff + chklen, &tcp->flags, sizeof(tcp->flags));
+	chklen += sizeof(tcp->flags);
+
+	memcpy(buff + chklen, &tcp->window, sizeof(tcp->window));
+	chklen += sizeof(tcp->window);
+
+	memcpy(buff + chklen, &tcp->checksum, sizeof(tcp->checksum));
+	chklen += sizeof(tcp->checksum);
+
+	memcpy(buff + chklen, &tcp->urgent_pointer, sizeof(tcp->urgent_pointer));
+	chklen += sizeof(tcp->urgent_pointer);
+
+	/* Atualiza Checksum */
+	tcp->checksum = in_cksum((uint16_t *) buff, chklen);
+	
+	for (count = 0; count < N; count++) {
+		/* Envia pacote */
+		if (sendto(fd, packet, sizeof(struct ethernet_s) + sizeof(struct ipv6_s) + sizeof(struct tcp_s), 0, (struct sockaddr *) &socket_address, sizeof (struct sockaddr_ll)) < 0) {
+			perror("send");
+			close(fd);
+			exit(1);
+		}
+		sleep(1);
+	}
+
+	printf("%d Pacotes enviados.\n", count);
 
 	close(fd);
 	return 0;
